@@ -42,16 +42,13 @@
   [^long x]
   (>= x 32768))
 
-(defn load-arg
-  "If x designates a register, returns the content of that register, otherwise returns x."
-  [^long x registers]
-  (if (reg? x)
-    (registers (->reg x))
-    x))
-
 (defn add
   [^long x ^long y]
   (rem (+ x y) 32768))
+
+(defn nonzero?
+  [^long x]
+  (not (zero? x)))
 
 (defn store
   [vm dst val]
@@ -68,6 +65,21 @@
   [vm x]
   (update vm :ip ip+ x))
 
+(defn arg
+  "Returns the value in memory at ip + x"
+  ^long [{:keys [^long ip memory]} ^long x]
+  (-> ip (ip+ x) memory))
+
+(defn arg-load
+  "Looks at the value in memory at ip + x.
+  If it designates a register, returns the content of that register.
+  Otherwise returns the value."
+  ^long [vm ^long x]
+  (let [val (arg vm x)]
+    (if (reg? val)
+      ((vm :registers) (->reg val))
+      val)))
+
 
 ;; opcode handling ;;
 
@@ -79,31 +91,55 @@
 
 (defmethod execute-instruction :default
   [vm]
-  (-> (assoc vm :error (str "Unimplemented opcode: " (opcode vm)))
-      (update-ip 1)))
+  (assoc vm :error (str "Unimplemented opcode: " (opcode vm))))
 
 ; halt: 0
 ;  stop execution and terminate the program
 (defmethod execute-instruction 0
   [vm]
-  (-> (assoc vm :halted true)
-      (update-ip 1)))
+  (assoc vm :halted true))
+
+; jmp: 6 a
+;  jump to <a>
+(defmethod execute-instruction 6
+  [vm]
+  (assoc vm :ip (arg-load vm 1)))
+
+
+(defn cond-jmp
+  [vm pred]
+  (let [a (arg-load vm 1)]
+    (if (pred a)
+      (assoc vm :ip (arg-load vm 2))
+      (update-ip vm 3))))
+
+; jt: 7 a b
+;  if <a> is nonzero, jump to <b>
+(defmethod execute-instruction 7
+  [vm]
+  (cond-jmp vm nonzero?))
+
+; jf: 8 a b
+;  if <a> is zero, jump to <b>
+(defmethod execute-instruction 8
+  [vm]
+  (cond-jmp vm zero?))
 
 ; add: 9 a b c
 ;  assign into <a> the sum of <b> and <c> (modulo 32768)
 (defmethod execute-instruction 9
-  [{:keys [^long ip memory registers] :as vm}]
-  (let [a (-> ip (ip+ 1) memory)
-        b (-> ip (ip+ 2) memory (load-arg registers))
-        c (-> ip (ip+ 3) memory (load-arg registers))]
+  [vm]
+  (let [a (arg vm 1)
+        b (arg-load vm 2)
+        c (arg-load vm 3)]
     (-> (store vm a (add b c))
         (update-ip 4))))
 
 ; out: 19 a
 ;  write the character represented by ascii code <a> to the terminal
 (defmethod execute-instruction 19
-  [{:keys [^long ip memory registers] :as vm}]
-  (-> ip (ip+ 1) memory (load-arg registers) char print)
+  [vm]
+  (-> vm (arg-load 1) char print)
   (update-ip vm 2))
 
 ; noop: 21
@@ -155,8 +191,11 @@
   (def vm (load-program initial-state program))
 
   (let [finished-vm (run-vm vm)]
-    (println)
     (println-vm finished-vm))
+
+  (let [finished-vm (run-vm vm)]
+    (println-vm finished-vm)
+    (def vm2 finished-vm))
 
   ;
   )
