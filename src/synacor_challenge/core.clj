@@ -46,6 +46,10 @@
   [^long x ^long y]
   (rem (+ x y) 32768))
 
+(defn multiply
+  [^long x ^long y]
+  (rem (* x y) 32768))
+
 (defn nonzero?
   [^long x]
   (not (zero? x)))
@@ -131,25 +135,28 @@
           (update-ip 2))
       (assoc vm :error "Cannot pop an empty stack"))))
 
-(defn cond-store
-  [vm pred]
+(defn alu-op
+  "Executes an ALU operation of 3 arguments a, b, and c where a is the destination register
+  and the calculation takes b and c as arguments."
+  [vm calc]
   (let [a (arg vm 1)
         b (arg-load vm 2)
         c (arg-load vm 3)]
-    (-> (store vm a (if (pred b c) 1 0))
+    (-> (store vm a (calc b c))
         (update-ip 4))))
 
 ; eq: 4 a b c
 ;  set <a> to 1 if <b> is equal to <c>; set it to 0 otherwise
 (defmethod execute-instruction 4
   [vm]
-  (cond-store vm =))
+  (alu-op vm #(if (= %1 %2) 1 0)))
 
 ; gt: 5 a b c
 ;  set <a> to 1 if <b> is greater than <c>; set it to 0 otherwise
 (defmethod execute-instruction 5
   [vm]
-  (cond-store vm >))
+  (alu-op vm (fn [^long x ^long y]
+               (if (> x y) 1 0))))
 
 ; jmp: 6 a
 ;  jump to <a>
@@ -181,11 +188,42 @@
 ;  assign into <a> the sum of <b> and <c> (modulo 32768)
 (defmethod execute-instruction 9
   [vm]
+  (alu-op vm add))
+
+; mult: 10 a b c
+;  store into <a> the product of <b> and <c> (modulo 32768)
+(defmethod execute-instruction 10
+  [vm]
+  (alu-op vm multiply))
+
+; mod: 11 a b c
+;  store into <a> the remainder of <b> divided by <c>
+(defmethod execute-instruction 11
+  [vm]
+  (alu-op vm rem))
+
+; and: 12 a b c
+;  stores into <a> the bitwise and of <b> and <c>
+(defmethod execute-instruction 12
+  [vm]
+  (alu-op vm bit-and))
+
+; or: 13 a b c
+;  stores into <a> the bitwise or of <b> and <c>
+(defmethod execute-instruction 13
+  [vm]
+  (alu-op vm bit-or))
+
+; not: 14 a b
+;  stores 15-bit bitwise inverse of <b> in <a>
+(defmethod execute-instruction 14
+  [vm]
   (let [a (arg vm 1)
         b (arg-load vm 2)
-        c (arg-load vm 3)]
-    (-> (store vm a (add b c))
-        (update-ip 4))))
+        inverse (bit-and (bit-not b) 2r111111111111111)]
+    (-> (store vm a inverse)
+        (update-ip 3))))
+
 
 ; out: 19 a
 ;  write the character represented by ascii code <a> to the terminal
