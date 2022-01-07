@@ -1,37 +1,23 @@
 (ns synacor-challenge.core
   (:use [criterium.core])
   (:require [clojure.java.io :as io]
-            [clojure.pprint :as pp])
-  (:gen-class))
+            [clojure.pprint :as pp]
+            [clojure.string :as str])
+  (:gen-class)
+  (:import (java.io PipedReader PipedWriter Reader)))
 
 (set! *unchecked-math* :warn-on-boxed)
 (set! *warn-on-reflection* true)
-
-;== architecture ==
-;- three storage regions
-;  - memory with 15-bit address space storing 16-bit values
-;  - eight registers
-;  - an unbounded stack which holds individual 16-bit values
-;- all numbers are unsigned integers 0..32767 (15-bit)
-;- all math is modulo 32768; 32758 + 15 => 5
 
 (def initial-state
   {:ip        0
    :memory    (vec (repeat 32768 0))                        ;; 15-bit address space
    :registers [0 0 0 0 0 0 0 0]                             ;; 8 registers
-   :stack     '()})
+   :stack     []})
 
 (defn println-vm
   [vm]
   (pp/pprint (dissoc vm :memory)))
-
-;== binary format ==
-;- each number is stored as a 16-bit little-endian pair (low byte, high byte)
-;- numbers 0..32767 mean a literal value
-;- numbers 32768..32775 instead mean registers 0..7
-;- numbers 32776..65535 are invalid
-;- programs are loaded into memory starting at address 0
-;- address 0 is the first 16-bit value, address 1 is the second 16-bit value, etc
 
 (defn ->reg
   "Returns the register index of the given value"
@@ -59,20 +45,6 @@
   [vm dst val]
   (if (reg? dst)
     (update vm :registers assoc (->reg dst) val)
-    (update vm :memory assoc dst val)))
-
-#_(defn write-reg
-  [vm dst val]
-  (if (reg? dst)
-    (update vm :registers assoc (->reg dst) val)
-    (-> (assoc vm :error (str "dst does not designate a register: " dst))
-        (assoc vm :ip-at-error (:ip vm)))))
-
-#_(defn write-mem
-  [vm dst val]
-  (if (reg? dst)
-    (-> (assoc vm :error (str "dst is not a memory address: " dst))
-        (assoc vm :ip-at-error (:ip vm)))
     (update vm :memory assoc dst val)))
 
 (defn ip+
@@ -285,9 +257,10 @@
 ;  read a character from the terminal and write its ascii code to <a>; it can be assumed that once input starts, it will continue until a newline is encountered; this means that you can safely read whole lines from the keyboard and trust that they will be fully read
 (defmethod execute-instruction 20
   [vm]
-  (let [a (mem vm 1)
-        input (.read System/in)]
+  (let [a     (mem vm 1)
+        input (.read ^Reader *in*)]
     (-> (store vm a input)
+        (assoc :reading? (not= input (int \newline)))
         (update-ip 2))))
 
 ; noop: 21
@@ -297,16 +270,49 @@
   (update-ip vm 1))
 
 
+(defn pause-for-input?
+  [vm]
+  ;; return true if we just start reading an input line
+  (and (= 20 (opcode vm))
+       (not (vm :reading?))))
+
+;; input handling ;;
+
+(defonce ^PipedReader piped-in (PipedReader.))
+(defonce ^PipedWriter piped-out (PipedWriter. piped-in))
+
+(defn say
+  [^String line]
+  (.write piped-out line)
+  (.write piped-out (int \newline))
+  (.flush piped-out))
+
+(defmacro s
+  [& syms]
+  `(say ~(str/join " " (map name syms))))
+
+
 ;; main ;;
+
+(def current-state (atom nil))
+(def load-state (atom nil))
 
 (defn run-vm
   "Runs the vm until it halts or errors"
-  [vm]
-  (loop [vm vm]
-    (flush)
-    (if (or (:halted vm) (:error vm))
-      vm
-      (recur (execute-instruction vm)))))
+  [vm use-terminal-in?]
+  (binding [*in* (if use-terminal-in? *in* piped-in)]
+    (loop [vm vm]
+      (flush)
+      (let [load-vm @load-state
+            vm      (or load-vm vm)]
+        (when load-vm
+          (reset! load-state nil))
+        (if (or (vm :halted) (vm :error))
+          vm
+          (do (when (pause-for-input? vm)
+                (prn (vm :registers))
+                (reset! current-state vm))
+              (recur (execute-instruction vm))))))))
 
 
 (defn load-program
@@ -328,29 +334,47 @@
 
 
 (defn -main [& _args]
-  (->> (load-binary)
-       (load-program initial-state)
-       (run-vm)
-       (println-vm)))
+  (-> (load-program initial-state (load-binary))
+      (run-vm true)
+      (println-vm)))
 
 
 (comment
 
   ;; prints [EOT] ascii symbol, then the halted VM state
   (let [test-vm     (load-program initial-state [9, 32768, 32769, 4, 19, 32768])
-        finished-vm (run-vm test-vm)]
+        finished-vm (run-vm test-vm false)]
     (println)
     (println-vm finished-vm))
 
   (def vm (load-program initial-state (load-binary)))
 
-  (let [finished-vm (run-vm vm)]
+  (let [finished-vm (run-vm vm false)]
     (println-vm finished-vm))
 
   (future
-    (let [finished-vm (run-vm vm)]
+    (let [finished-vm (run-vm vm false)]
       (println-vm finished-vm)
       (def vm2 finished-vm)))
+
+  ;; save
+  (def save @current-state)
+  ;; load
+  (do (reset! load-state save) nil)
+
+  ;; save to file
+  (spit "save.edn" (prn-str save))
+  ;; load from file
+  (def save (read-string (slurp "save.edn")))
+
+  ;; define actions as macros
+  (do
+    (defmacro look [& syms] `(s look ~@syms))
+    (defmacro go [& syms] `(s go ~@syms))
+    (defmacro inv [] `(s inv))
+    (defmacro take [& syms] `(s take ~@syms))
+    (defmacro drop [& syms] `(s drop ~@syms))
+    (defmacro use [& syms] `(s use ~@syms)))
 
   ;
   )
