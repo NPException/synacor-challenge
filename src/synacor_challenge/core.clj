@@ -1,7 +1,8 @@
 (ns synacor-challenge.core
   (:use [criterium.core])
   (:require [clojure.java.io :as io]
-            [clojure.pprint :as pp]))
+            [clojure.pprint :as pp])
+  (:gen-class))
 
 (set! *unchecked-math* :warn-on-boxed)
 (set! *warn-on-reflection* true)
@@ -276,6 +277,15 @@
   (-> vm (arg 1) char print)
   (update-ip vm 2))
 
+; in: 20 a
+;  read a character from the terminal and write its ascii code to <a>; it can be assumed that once input starts, it will continue until a newline is encountered; this means that you can safely read whole lines from the keyboard and trust that they will be fully read
+(defmethod execute-instruction 20
+  [vm]
+  (let [a (mem vm 1)
+        input (.read System/in)]
+    (-> (write-reg vm a input)
+        (update-ip 2))))
+
 ; noop: 21
 ;  no operation
 (defmethod execute-instruction 21
@@ -289,6 +299,7 @@
   "Runs the vm until it halts or errors"
   [vm]
   (loop [vm vm]
+    (flush)
     (if (or (:halted vm) (:error vm))
       vm
       (recur (execute-instruction vm)))))
@@ -312,6 +323,13 @@
           (recur (conj! program (bit-or (bit-shift-left high 8) low))))))))
 
 
+(defn -main [& _args]
+  (->> (load-binary)
+       (load-program initial-state)
+       (run-vm)
+       (println-vm)))
+
+
 (comment
 
   ;; prints [EOT] ascii symbol, then the halted VM state
@@ -325,9 +343,10 @@
   (let [finished-vm (run-vm vm)]
     (println-vm finished-vm))
 
-  (let [finished-vm (run-vm vm)]
-    (println-vm finished-vm)
-    (def vm2 finished-vm))
+  (future
+    (let [finished-vm (run-vm vm)]
+      (println-vm finished-vm)
+      (def vm2 finished-vm)))
 
   ;
   )
