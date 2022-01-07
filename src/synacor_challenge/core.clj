@@ -9,12 +9,6 @@
 (set! *unchecked-math* :warn-on-boxed)
 (set! *warn-on-reflection* true)
 
-(def initial-state
-  {:ip        0
-   :memory    (vec (repeat 32768 0))                        ;; 15-bit address space
-   :registers [0 0 0 0 0 0 0 0]                             ;; 8 registers
-   :stack     []})
-
 (defn println-vm
   [vm]
   (pp/pprint (dissoc vm :memory)))
@@ -316,44 +310,33 @@
 
 
 (defn load-program
-  [vm program]
-  (update vm :memory
-    (fn [memory]
-      (vec (concat program (subvec memory (count program)))))))
-
-
-(defn load-binary
   []
-  (with-open [in (io/input-stream (io/resource "challenge.bin"))]
-    (loop [program (transient [])]
-      (let [low  (.read in)
-            high (.read in)]
-        (if (< low 0)
-          (persistent! program)
-          (recur (conj! program (bit-or (bit-shift-left high 8) low))))))))
+  (let [program (with-open [in (io/input-stream (io/resource "challenge.bin"))]
+                  (loop [program (transient [])]
+                    (let [low  (.read in)
+                          high (.read in)]
+                      (if (< low 0)
+                        (persistent! program)
+                        (recur (conj! program (bit-or (bit-shift-left high 8) low)))))))]
+    {:ip        0
+     :memory    (->> (concat program (repeat 0))
+                     (take 32768)                           ;; 15-bit address space
+                     vec)
+     :registers [0 0 0 0 0 0 0 0]                           ;; 8 registers
+     :stack     []}))
 
 
 (defn -main [& _args]
-  (-> (load-program initial-state (load-binary))
+  (-> (load-program)
       (run-vm true)
       (println-vm)))
 
 
 (comment
 
-  ;; prints [EOT] ascii symbol, then the halted VM state
-  (let [test-vm     (load-program initial-state [9, 32768, 32769, 4, 19, 32768])
-        finished-vm (run-vm test-vm false)]
-    (println)
-    (println-vm finished-vm))
-
-  (def vm (load-program initial-state (load-binary)))
-
-  (let [finished-vm (run-vm vm false)]
-    (println-vm finished-vm))
-
   (future
-    (let [finished-vm (run-vm vm false)]
+    (let [vm          (load-program)
+          finished-vm (run-vm vm false)]
       (println-vm finished-vm)
       (def vm2 finished-vm)))
 
