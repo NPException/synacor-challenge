@@ -55,16 +55,20 @@
   [^long x]
   (not (zero? x)))
 
-(defn write-reg
+(defn store
+  [vm dst val]
+  (if (reg? dst)
+    (update vm :registers assoc (->reg dst) val)
+    (update vm :memory assoc dst val)))
+
+#_(defn write-reg
   [vm dst val]
   (if (reg? dst)
     (update vm :registers assoc (->reg dst) val)
     (-> (assoc vm :error (str "dst does not designate a register: " dst))
-        (assoc vm :ip-at-error (:ip vm)))
-    ;; this commented out form would instead store the value directly into the memory
-    #_(update vm :memory assoc dst val)))
+        (assoc vm :ip-at-error (:ip vm)))))
 
-(defn write-mem
+#_(defn write-mem
   [vm dst val]
   (if (reg? dst)
     (-> (assoc vm :error (str "dst is not a memory address: " dst))
@@ -120,7 +124,7 @@
   [vm]
   (let [a (mem vm 1)
         b (arg vm 2)]
-    (-> (write-reg vm a b)
+    (-> (store vm a b)
         (update-ip 3))))
 
 ; push: 2 a
@@ -138,7 +142,7 @@
   (let [a   (mem vm 1)
         val (peek (vm :stack))]
     (if val
-      (-> (write-reg vm a val)
+      (-> (store vm a val)
           (update :stack pop)
           (update-ip 2))
       (assoc vm :error "Cannot pop an empty stack"))))
@@ -150,7 +154,7 @@
   (let [a (mem vm 1)
         b (arg vm 2)
         c (arg vm 3)]
-    (-> (write-reg vm a (calc b c))
+    (-> (store vm a (calc b c))
         (update-ip 4))))
 
 ; eq: 4 a b c
@@ -229,7 +233,7 @@
   (let [a       (mem vm 1)
         b       (arg vm 2)
         inverse (bit-and (bit-not b) 2r111111111111111)]
-    (-> (write-reg vm a inverse)
+    (-> (store vm a inverse)
         (update-ip 3))))
 
 ; rmem: 15 a b
@@ -239,7 +243,7 @@
   (let [a   (mem vm 1)
         b   (arg vm 2)
         val ((vm :memory) b)]
-    (-> (write-reg vm a val)
+    (-> (store vm a val)
         (update-ip 3))))
 
 ; wmem: 16 a b
@@ -248,7 +252,7 @@
   [vm]
   (let [a (arg vm 1)
         b (arg vm 2)]
-    (-> (write-mem vm a b)
+    (-> (store vm a b)
         (update-ip 3))))
 
 ; call: 17 a
@@ -283,7 +287,7 @@
   [vm]
   (let [a (mem vm 1)
         input (.read System/in)]
-    (-> (write-reg vm a input)
+    (-> (store vm a input)
         (update-ip 2))))
 
 ; noop: 21
