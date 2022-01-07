@@ -54,7 +54,10 @@
   [vm dst val]
   (if (reg? dst)
     (update vm :registers assoc (->reg dst) val)
-    (update vm :memory assoc dst val)))
+    (-> (assoc vm :error (str "Value does not designate a register: " dst))
+        (assoc vm :ip-at-error (:ip vm)))
+    ;; this commented out form would instead store the value directly into the memory
+    #_(update vm :memory assoc dst val)))
 
 (defn ip+
   "Advance the instruction pointer by x"
@@ -98,6 +101,55 @@
 (defmethod execute-instruction 0
   [vm]
   (assoc vm :halted true))
+
+; set: 1 a b
+;  set register <a> to the value of <b>
+(defmethod execute-instruction 1
+  [vm]
+  (let [a (arg vm 1)
+        b (arg-load vm 2)]
+    (-> (store vm a b)
+        (update-ip 3))))
+
+; push: 2 a
+;  push <a> onto the stack
+(defmethod execute-instruction 2
+  [vm]
+  (let [a (arg-load vm 1)]
+    (-> (update vm :stack conj a)
+        (update-ip 2))))
+
+; pop: 3 a
+;  remove the top element from the stack and write it into <a>; empty stack = error
+(defmethod execute-instruction 3
+  [vm]
+  (let [a (arg vm 1)
+        val (peek (vm :stack))]
+    (if val
+      (-> (store vm a val)
+          (update :stack pop)
+          (update-ip 2))
+      (assoc vm :error "Cannot pop an empty stack"))))
+
+(defn cond-store
+  [vm pred]
+  (let [a (arg vm 1)
+        b (arg-load vm 2)
+        c (arg-load vm 3)]
+    (-> (store vm a (if (pred b c) 1 0))
+        (update-ip 4))))
+
+; eq: 4 a b c
+;  set <a> to 1 if <b> is equal to <c>; set it to 0 otherwise
+(defmethod execute-instruction 4
+  [vm]
+  (cond-store vm =))
+
+; gt: 5 a b c
+;  set <a> to 1 if <b> is greater than <c>; set it to 0 otherwise
+(defmethod execute-instruction 5
+  [vm]
+  (cond-store vm >))
 
 ; jmp: 6 a
 ;  jump to <a>
